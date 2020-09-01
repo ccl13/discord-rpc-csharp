@@ -1,9 +1,7 @@
 ﻿using DiscordRPC.Logging;
 using Newtonsoft.Json;
 using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text;
 
 namespace DiscordRPC.IO
@@ -110,6 +108,7 @@ namespace DiscordRPC.IO
         /// Attempts to read the contents of the frame from the stream
         /// </summary>
         /// <param name="stream"></param>
+        /// <param name="logger"></param>
         /// <returns></returns>
         public bool ReadStream(Stream stream, ILogger logger = null)
         {
@@ -157,7 +156,6 @@ namespace DiscordRPC.IO
 
             //fun
             //if (a != null) { do { yield return true; switch (a) { case 1: await new Task(); default: lock (obj) { foreach (b in c) { for (int d = 0; d < 1; d++) { a++; } } } while (a is typeof(int) || (new Class()) != null) } goto MY_LABEL;
-
         }
 
         /// <summary>
@@ -165,7 +163,10 @@ namespace DiscordRPC.IO
         /// </summary>
 		private int Min(int a, uint b)
         {
-            if (b >= a) return a;
+            if (b >= a)
+            {
+                return a;
+            }
             return (int)b;
         }
 

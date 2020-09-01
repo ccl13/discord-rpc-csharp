@@ -51,8 +51,14 @@ namespace DiscordRPC
         /// </summary>
         public bool IsDisposed { get; private set; }
 
+        /// <summary>
+        /// Access Code got from Authorize call
+        /// </summary>
         public string AccessCode { get; private set; }
 
+        /// <summary>
+        /// Access Token got from Authenticate call
+        /// </summary>
         public string AccessToken { get; private set; }
 
         /// <summary>
@@ -84,7 +90,7 @@ namespace DiscordRPC
         /// The pipe the discord client is on, ranging from 0 to 9. Use -1 to scan through all pipes.
         /// <para>This property can be used for testing multiple clients. For example, if a Discord Client was on pipe 0, the Discord Canary is most likely on pipe 1.</para>
         /// </summary>
-        public int TargetPipe { get; private set; }
+        public int TargetPipeNumber { get; private set; }
 
         private RpcConnection connection;
 
@@ -198,12 +204,14 @@ namespace DiscordRPC
         public event OnConnectionFailedEvent OnConnectionFailed;
 
         /// <summary>
+        /// Called when got Voice Settings Update message, either from subscription or from direct call
+        /// </summary>
+        public event OnVoiceSettingsUpdateEvent OnVoiceSettingsUpdate;
+
+        /// <summary>
         /// The RPC Connection has sent a message. Called before any other event and executed from the RPC Thread.
         /// </summary>
         public event OnRpcMessageEvent OnRpcMessage;
-
-
-        public event OnVoiceSettingsUpdateEvent OnVoiceSettingsUpdate;
 
         #endregion
 
@@ -219,11 +227,11 @@ namespace DiscordRPC
         /// Creates a new Discord RPC Client which can be used to send Rich Presence and receive Join / Spectate events. This constructor exposes more advance features such as custom NamedPipeClients and Loggers.
         /// </summary>
         /// <param name="clientId">The ID of the application created at discord's developers portal.</param>
-        /// <param name="pipe">The pipe to connect too. If -1, then the client will scan for the first available instance of Discord.</param>
+        /// <param name="pipeNumber">The pipe to connect too. If -1, then the client will scan for the first available instance of Discord.</param>
         /// <param name="logger">The logger used to report messages. If null, then a <see cref="NullLogger"/> will be created and logs will be ignored.</param>
         /// <param name="autoEvents">Should events be automatically invoked from the RPC Thread as they arrive from discord?</param>
         /// <param name="client">The pipe client to use and communicate to discord through. If null, the default <see cref="ManagedNamedPipeClient"/> will be used.</param>
-        public DiscordRpcClient(string clientId, int pipe = -1, ILogger logger = null, bool autoEvents = true, INamedPipeClient client = null)
+        public DiscordRpcClient(string clientId, int pipeNumber = -1, ILogger logger = null, bool autoEvents = true, INamedPipeClient client = null)
         {
             //Make sure appID is NOT null.
             if (string.IsNullOrEmpty(clientId))
@@ -237,7 +245,7 @@ namespace DiscordRPC
 
             //Store the properties
             ClientId = clientId.Trim();
-            TargetPipe = pipe;
+            TargetPipeNumber = pipeNumber;
             ProcessID = System.Diagnostics.Process.GetCurrentProcess().Id;
             HasRegisteredUriScheme = false;
             AutoEvents = autoEvents;
@@ -247,7 +255,7 @@ namespace DiscordRPC
             _logger = logger ?? new NullLogger();
 
             //Create the RPC client, giving it the important details
-            connection = new RpcConnection(ClientId, ProcessID, TargetPipe, client ?? new ManagedNamedPipeClient(), autoEvents ? 0 : 128U)
+            connection = new RpcConnection(ClientId, ProcessID, TargetPipeNumber, client ?? new ManagedNamedPipeClient(), autoEvents ? 0 : 128U)
             {
                 ShutdownOnly = _shutdownOnly,
                 Logger = _logger
@@ -257,16 +265,21 @@ namespace DiscordRPC
             connection.OnRpcMessage += (sender, msg) =>
             {
                 if (OnRpcMessage != null)
+                {
                     OnRpcMessage.Invoke(this, msg);
+                }
 
                 if (AutoEvents)
+                {
                     ProcessMessage(msg);
+                }
             };
         }
 
         #endregion
 
         #region Message Handling
+
         /// <summary>
         /// Dequeues all the messages from Discord, processes them and then invoke appropriate event handlers. This will process the message and update the internal state before invoking the events. Returns the messages that were invoked in the order they were invoked.
         /// <para>This method cannot be used if <see cref="AutoEvents"/> is enabled.</para>
@@ -456,6 +469,10 @@ namespace DiscordRPC
         }
         #endregion
 
+        /// <summary>
+        /// Code trunk for doing some common and standard availability checks
+        /// </summary>
+        /// <param name="treatNoInitializedAsException"></param>
         public void DoStandardPrecheck(bool treatNoInitializedAsException)
         {
             if (IsDisposed)
@@ -581,7 +598,9 @@ namespace DiscordRPC
         public RichPresence UpdateDetails(string details)
         {
             if (!IsInitialized)
+            {
                 throw new UninitializedException();
+            }
 
             lock (_sync)
             {

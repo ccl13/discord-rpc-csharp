@@ -101,16 +101,16 @@ namespace DiscordRPC.RPC
 
         private int targetPipe;                             //The pipe to taget. Leave as -1 for any available pipe.
 
-        private readonly object l_rtqueue = new object();	//Lock for the send queue
+        private readonly object _rtQueueLock = new object();	//Lock for the send queue
         private readonly uint _maxRtQueueSize;
-        private Queue<ICommand> _rtqueue;                   //The send queue
+        private Queue<ICommand> _rtQueue;                   //The send queue
 
-        private readonly object l_rxqueue = new object();	//Lock for the receive queue
+        private readonly object _rxQueueLock = new object();	//Lock for the receive queue
         private readonly uint _maxRxQueueSize;              //The max size of the RX queue
-        private Queue<IMessage> _rxqueue;                   //The receive queue
+        private Queue<IMessage> _rxQueue;                   //The receive queue
 
-        private AutoResetEvent queueUpdatedEvent = new AutoResetEvent(false);
-        private BackoffDelay delay;                     //The backoff delay before reconnecting.
+        private AutoResetEvent _queueUpdatedEvent = new AutoResetEvent(false);
+        private BackoffDelay _delay;                     //The backoff delay before reconnecting.
         #endregion
 
         /// <summary>
@@ -133,12 +133,12 @@ namespace DiscordRPC.RPC
             //Assign a default logger
             Logger = new ConsoleLogger();
 
-            delay = new BackoffDelay(500, 60 * 1000);
+            _delay = new BackoffDelay(500, 60 * 1000);
             _maxRtQueueSize = maxRtQueueSize;
-            _rtqueue = new Queue<ICommand>((int)_maxRtQueueSize + 1);
+            _rtQueue = new Queue<ICommand>((int)_maxRtQueueSize + 1);
 
             _maxRxQueueSize = maxRxQueueSize;
-            _rxqueue = new Queue<IMessage>((int)_maxRxQueueSize + 1);
+            _rxQueue = new Queue<IMessage>((int)_maxRxQueueSize + 1);
 
             nonce = 0;
         }
@@ -163,17 +163,17 @@ namespace DiscordRPC.RPC
             if (aborting || shutdown) return;
 
             //Enqueue the set presence argument
-            lock (l_rtqueue)
+            lock (_rtQueueLock)
             {
                 //If we are too big drop the last element
-                if (_rtqueue.Count == _maxRtQueueSize)
+                if (_rtQueue.Count == _maxRtQueueSize)
                 {
                     Logger.Error("Too many enqueued commands, dropping oldest one. Maybe you are pushing new presences too fast?");
-                    _rtqueue.Dequeue();
+                    _rtQueue.Dequeue();
                 }
 
                 //Enqueue the message
-                _rtqueue.Enqueue(command);
+                _rtQueue.Enqueue(command);
             }
         }
 
@@ -187,7 +187,9 @@ namespace DiscordRPC.RPC
             try
             {
                 if (OnRpcMessage != null)
+                {
                     OnRpcMessage.Invoke(this, message);
+                }
             }
             catch (Exception e)
             {
@@ -205,17 +207,17 @@ namespace DiscordRPC.RPC
 
             //Large queue sizes should keep the queue in check
             Logger.Trace("Enqueue Message: " + message.Type);
-            lock (l_rxqueue)
+            lock (_rxQueueLock)
             {
                 //If we are too big drop the last element
-                if (_rxqueue.Count == _maxRxQueueSize)
+                if (_rxQueue.Count == _maxRxQueueSize)
                 {
                     Logger.Warning("Too many enqueued messages, dropping oldest one.");
-                    _rxqueue.Dequeue();
+                    _rxQueue.Dequeue();
                 }
 
                 //Enqueue the message
-                _rxqueue.Enqueue(message);
+                _rxQueue.Enqueue(message);
             }
         }
 
@@ -226,13 +228,13 @@ namespace DiscordRPC.RPC
         internal IMessage DequeueMessage()
         {
             //Logger.Trace("Deque Message");
-            lock (l_rxqueue)
+            lock (_rxQueueLock)
             {
                 //We have nothing, so just return null.
-                if (_rxqueue.Count == 0) return null;
+                if (_rxQueue.Count == 0) return null;
 
                 //Get the value and remove it from the list at the same time
-                return _rxqueue.Dequeue();
+                return _rxQueue.Dequeue();
             }
         }
 
@@ -243,13 +245,13 @@ namespace DiscordRPC.RPC
         internal IMessage[] DequeueMessages()
         {
             //Logger.Trace("Deque Multiple Messages");
-            lock (l_rxqueue)
+            lock (_rxQueueLock)
             {
                 //Copy the messages into an array
-                IMessage[] messages = _rxqueue.ToArray();
+                IMessage[] messages = _rxQueue.ToArray();
 
                 //Clear the entire queue
-                _rxqueue.Clear();
+                _rxQueue.Clear();
 
                 //return the array
                 return messages;
@@ -391,7 +393,7 @@ namespace DiscordRPC.RPC
                                 ProcessCommandQueue();
 
                                 //Wait for some time, or until a command has been queued up
-                                queueUpdatedEvent.WaitOne(POLL_RATE);
+                                _queueUpdatedEvent.WaitOne(POLL_RATE);
                             }
 
                             #endregion
@@ -411,10 +413,10 @@ namespace DiscordRPC.RPC
                     {
                         //We have disconnected for some reason, either a failed pipe or a bad reading,
                         // so we are going to wait a bit before doing it again
-                        long sleep = delay.NextDelay();
+                        long sleep = _delay.NextDelay();
 
                         Logger.Trace("Waiting {0}ms before attempting to connect again", sleep);
-                        Thread.Sleep(delay.NextDelay());
+                        Thread.Sleep(_delay.NextDelay());
                     }
                 }
                 //catch(InvalidPipeException e)
@@ -480,7 +482,7 @@ namespace DiscordRPC.RPC
                 {
                     Logger.Info("Connection established with the RPC");
                     SetConnectionState(RpcState.Connected);
-                    delay.Reset();
+                    _delay.Reset();
 
                     //Prepare the object
                     ReadyMessage ready = response.GetObject<ReadyMessage>();
@@ -646,15 +648,15 @@ namespace DiscordRPC.RPC
             //Continue looping until we dont need anymore messages
             while (needsWriting && namedPipe.IsConnected)
             {
-                lock (l_rtqueue)
+                lock (_rtQueueLock)
                 {
                     //Pull the value and update our writing needs
                     // If we have nothing to write, exit the loop
-                    needsWriting = _rtqueue.Count > 0;
+                    needsWriting = _rtQueue.Count > 0;
                     if (!needsWriting) break;
 
                     //Peek at the item
-                    item = _rtqueue.Peek();
+                    item = _rtQueue.Peek();
                 }
 
                 //BReak out of the loop as soon as we send this item
@@ -675,7 +677,7 @@ namespace DiscordRPC.RPC
 
                     //Queue the item
                     Logger.Trace("Handwave sent, ending queue processing.");
-                    lock (l_rtqueue) _rtqueue.Dequeue();
+                    lock (_rtQueueLock) _rtQueue.Dequeue();
 
                     //Stop sending any more messages
                     return;
@@ -686,7 +688,7 @@ namespace DiscordRPC.RPC
                     {
                         //We are aborting, so just dequeue the message and dont bother sending it
                         Logger.Warning("- skipping frame because of abort.");
-                        lock (l_rtqueue) _rtqueue.Dequeue();
+                        lock (_rtQueueLock) _rtQueue.Dequeue();
                     }
                     else
                     {
@@ -699,7 +701,7 @@ namespace DiscordRPC.RPC
                         {
                             //We sent it, so now dequeue it
                             Logger.Trace("Sent Successfully.");
-                            lock (l_rtqueue) _rtqueue.Dequeue();
+                            lock (_rtQueueLock) _rtQueue.Dequeue();
                         }
                         else
                         {
@@ -830,15 +832,15 @@ namespace DiscordRPC.RPC
             shutdown = true;
 
             //Clear the commands and enqueue the close
-            lock (l_rtqueue)
+            lock (_rtQueueLock)
             {
-                _rtqueue.Clear();
-                if (CLEAR_ON_SHUTDOWN) _rtqueue.Enqueue(new PresenceCommand() { PID = processID, Presence = null });
-                _rtqueue.Enqueue(new CloseCommand());
+                _rtQueue.Clear();
+                if (CLEAR_ON_SHUTDOWN) _rtQueue.Enqueue(new PresenceCommand() { PID = processID, Presence = null });
+                _rtQueue.Enqueue(new CloseCommand());
             }
 
             //Trigger the event
-            queueUpdatedEvent.Set();
+            _queueUpdatedEvent.Set();
         }
 
         /// <summary>
@@ -868,7 +870,7 @@ namespace DiscordRPC.RPC
             //Terminate
             Logger.Trace("Updating Abort State...");
             aborting = true;
-            queueUpdatedEvent.Set();
+            _queueUpdatedEvent.Set();
         }
 
 
