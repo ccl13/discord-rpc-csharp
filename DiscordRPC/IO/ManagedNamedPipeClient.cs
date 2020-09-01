@@ -254,7 +254,7 @@ namespace DiscordRPC.IO
                     try
                     {
                         PipeFrame frame = new PipeFrame();
-                        if (frame.ReadStream(memory))
+                        if (frame.ReadStream(memory, Logger))
                         {
                             Logger.Trace("Read a frame: {0}", frame.Opcode);
 
