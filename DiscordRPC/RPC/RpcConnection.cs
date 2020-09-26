@@ -328,7 +328,6 @@ namespace DiscordRPC.RPC
                                 {
                                     //We have been told by discord to close, so we will consider it an abort
                                     case Opcode.Close:
-
                                         ClosePayload close = frame.GetObject<ClosePayload>();
                                         Logger.Warning("We have been told to terminate by discord: ({0}) {1}", close.Code, close.Reason);
                                         EnqueueMessage(new CloseMessage() { Code = close.Code, Reason = close.Reason });
@@ -372,7 +371,10 @@ namespace DiscordRPC.RPC
                                             Logger.Error("Data: " + frame.Message);
                                         }
 
-                                        if (response != null) ProcessFrame(response);
+                                        if (response != null)
+                                        {
+                                            ProcessFrame(response);
+                                        }
                                         break;
 
 

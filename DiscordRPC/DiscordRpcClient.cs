@@ -241,7 +241,10 @@ namespace DiscordRPC
 
             //Ensure we actually have json ahead of time. If statement is pointless, but its there just to ensure there is no unused warnings.
             var jsonConverterType = typeof(Newtonsoft.Json.JsonConverter);
-            if (jsonConverterType == null) throw new Exception("JsonConverter Type Not Found");
+            if (jsonConverterType == null)
+            {
+                throw new Exception("JsonConverter Type Not Found");
+            }
 
             //Store the properties
             ClientId = clientId.Trim();
@@ -366,7 +369,10 @@ namespace DiscordRPC
                     {
                         //Update the User object within the join request if the current Cdn
                         var jrm = message as JoinRequestMessage;
-                        if (jrm != null) jrm.User.SetConfiguration(Configuration);
+                        if (jrm != null)
+                        {
+                            jrm.User.SetConfiguration(Configuration);
+                        }
                     }
                     break;
 
@@ -467,6 +473,7 @@ namespace DiscordRPC
                     break;
             }
         }
+
         #endregion
 
         /// <summary>
@@ -532,17 +539,25 @@ namespace DiscordRPC
                 //Send valid presence
                 //Validate the presence with our settings
                 if (presence.HasSecrets() && !HasRegisteredUriScheme)
+                {
                     throw new BadPresenceException("Cannot send a presence with secrets as this object has not registered a URI scheme. Please enable the uri scheme registration in the DiscordRpcClient constructor.");
+                }
 
                 if (presence.HasParty() && presence.Party.Max < presence.Party.Size)
+                {
                     throw new BadPresenceException("Presence maximum party size cannot be smaller than the current size.");
+                }
 
                 if (presence.HasSecrets() && !presence.HasParty())
+                {
                     Logger.Warning("The presence has set the secrets but no buttons will show as there is no party available.");
+                }
 
                 //Send the presence, but only if we are not skipping
                 if (!SkipIdenticalPresence || !presence.Matches(CurrentPresence))
+                {
                     connection.EnqueueCommand(new PresenceCommand() { PID = this.ProcessID, Presence = presence.Clone() });
+                }
             }
 
             //Update our local store
@@ -618,7 +633,9 @@ namespace DiscordRPC
         public RichPresence UpdateState(string state)
         {
             if (!IsInitialized)
+            {
                 throw new UninitializedException();
+            }
 
             lock (_sync)
             {
@@ -636,11 +653,16 @@ namespace DiscordRPC
         public RichPresence UpdateParty(Party party)
         {
             if (!IsInitialized)
+            {
                 throw new UninitializedException();
+            }
 
             lock (_sync)
             {
-                if (CurrentPresence == null) CurrentPresence = new RichPresence();
+                if (CurrentPresence == null)
+                {
+                    CurrentPresence = new RichPresence();
+                }
                 CurrentPresence.Party = party;
             }
 
@@ -656,13 +678,27 @@ namespace DiscordRPC
         public RichPresence UpdatePartySize(int size)
         {
             if (!IsInitialized)
+            {
                 throw new UninitializedException();
+            }
 
-            if (CurrentPresence == null) return null;
+            if (CurrentPresence == null)
+            {
+                return null;
+            }
             if (CurrentPresence.Party == null)
+            {
                 throw new BadPresenceException("Cannot set the size of the party if the party does not exist");
+            }
 
-            try { UpdatePartySize(size, CurrentPresence.Party.Max); } catch (Exception) { throw; }
+            try
+            {
+                UpdatePartySize(size, CurrentPresence.Party.Max);
+            }
+            catch (Exception)
+            {
+                throw;
+            }
             return CurrentPresence;
         }
         /// <summary>
@@ -675,11 +711,18 @@ namespace DiscordRPC
         public RichPresence UpdatePartySize(int size, int max)
         {
             if (!IsInitialized)
+            {
                 throw new UninitializedException();
+            }
 
-            if (CurrentPresence == null) return null;
+            if (CurrentPresence == null)
+            {
+                return null;
+            }
             if (CurrentPresence.Party == null)
+            {
                 throw new BadPresenceException("Cannot set the size of the party if the party does not exist");
+            }
 
             lock (_sync)
             {
@@ -700,12 +743,20 @@ namespace DiscordRPC
         public RichPresence UpdateLargeAsset(string key = null, string tooltip = null)
         {
             if (!IsInitialized)
+            {
                 throw new UninitializedException();
+            }
 
             lock (_sync)
             {
-                if (CurrentPresence == null) CurrentPresence = new RichPresence();
-                if (CurrentPresence.Assets == null) CurrentPresence.Assets = new Assets();
+                if (CurrentPresence == null)
+                {
+                    CurrentPresence = new RichPresence();
+                }
+                if (CurrentPresence.Assets == null)
+                {
+                    CurrentPresence.Assets = new Assets();
+                }
                 CurrentPresence.Assets.LargeImageKey = key ?? CurrentPresence.Assets.LargeImageKey;
                 CurrentPresence.Assets.LargeImageText = tooltip ?? CurrentPresence.Assets.LargeImageText;
             }
@@ -723,12 +774,20 @@ namespace DiscordRPC
         public RichPresence UpdateSmallAsset(string key = null, string tooltip = null)
         {
             if (!IsInitialized)
+            {
                 throw new UninitializedException();
+            }
 
             lock (_sync)
             {
-                if (CurrentPresence == null) CurrentPresence = new RichPresence();
-                if (CurrentPresence.Assets == null) CurrentPresence.Assets = new Assets();
+                if (CurrentPresence == null)
+                {
+                    CurrentPresence = new RichPresence();
+                }
+                if (CurrentPresence.Assets == null)
+                {
+                    CurrentPresence.Assets = new Assets();
+                }
                 CurrentPresence.Assets.SmallImageKey = key ?? CurrentPresence.Assets.SmallImageKey;
                 CurrentPresence.Assets.SmallImageText = tooltip ?? CurrentPresence.Assets.SmallImageText;
             }
@@ -745,11 +804,16 @@ namespace DiscordRPC
         public RichPresence UpdateSecrets(Secrets secrets)
         {
             if (!IsInitialized)
+            {
                 throw new UninitializedException();
+            }
 
             lock (_sync)
             {
-                if (CurrentPresence == null) CurrentPresence = new RichPresence();
+                if (CurrentPresence == null)
+                {
+                    CurrentPresence = new RichPresence();
+                }
                 CurrentPresence.Secrets = secrets;
             }
 
@@ -761,7 +825,17 @@ namespace DiscordRPC
         /// Sets the start time of the <see cref="CurrentPresence"/> to now and sends the updated presence to Discord.
         /// </summary>
         /// <returns>Updated Rich Presence</returns>
-        public RichPresence UpdateStartTime() { try { return UpdateStartTime(DateTime.UtcNow); } catch (Exception) { throw; } }
+        public RichPresence UpdateStartTime()
+        {
+            try
+            {
+                return UpdateStartTime(DateTime.UtcNow);
+            }
+            catch (Exception)
+            {
+                throw;
+            }
+        }
 
         /// <summary>
         /// Sets the start time of the <see cref="CurrentPresence"/> and sends the updated presence to Discord.
@@ -771,12 +845,20 @@ namespace DiscordRPC
         public RichPresence UpdateStartTime(DateTime time)
         {
             if (!IsInitialized)
+            {
                 throw new UninitializedException();
+            }
 
             lock (_sync)
             {
-                if (CurrentPresence == null) CurrentPresence = new RichPresence();
-                if (CurrentPresence.Timestamps == null) CurrentPresence.Timestamps = new Timestamps();
+                if (CurrentPresence == null)
+                {
+                    CurrentPresence = new RichPresence();
+                }
+                if (CurrentPresence.Timestamps == null)
+                {
+                    CurrentPresence.Timestamps = new Timestamps();
+                }
                 CurrentPresence.Timestamps.Start = time;
             }
 
@@ -788,7 +870,17 @@ namespace DiscordRPC
         /// Sets the end time of the <see cref="CurrentPresence"/> to now and sends the updated presence to Discord.
         /// </summary>
         /// <returns>Updated Rich Presence</returns>
-        public RichPresence UpdateEndTime() { try { return UpdateEndTime(DateTime.UtcNow); } catch (Exception) { throw; } }
+        public RichPresence UpdateEndTime()
+        {
+            try
+            {
+                return UpdateEndTime(DateTime.UtcNow);
+            }
+            catch (Exception)
+            {
+                throw;
+            }
+        }
 
         /// <summary>
         /// Sets the end time of the <see cref="CurrentPresence"/> and sends the updated presence to Discord.
@@ -798,12 +890,20 @@ namespace DiscordRPC
         public RichPresence UpdateEndTime(DateTime time)
         {
             if (!IsInitialized)
+            {
                 throw new UninitializedException();
+            }
 
             lock (_sync)
             {
-                if (CurrentPresence == null) CurrentPresence = new RichPresence();
-                if (CurrentPresence.Timestamps == null) CurrentPresence.Timestamps = new Timestamps();
+                if (CurrentPresence == null)
+                {
+                    CurrentPresence = new RichPresence();
+                }
+                if (CurrentPresence.Timestamps == null)
+                {
+                    CurrentPresence.Timestamps = new Timestamps();
+                }
                 CurrentPresence.Timestamps.End = time;
             }
 
@@ -818,11 +918,16 @@ namespace DiscordRPC
         public RichPresence UpdateClearTime()
         {
             if (!IsInitialized)
+            {
                 throw new UninitializedException();
+            }
 
             lock (_sync)
             {
-                if (CurrentPresence == null) return null;
+                if (CurrentPresence == null)
+                {
+                    return null;
+                }
                 CurrentPresence.Timestamps = null;
             }
 
@@ -837,13 +942,19 @@ namespace DiscordRPC
         public void ClearPresence()
         {
             if (IsDisposed)
+            {
                 throw new ObjectDisposedException("Discord IPC Client");
+            }
 
             if (!IsInitialized)
+            {
                 throw new UninitializedException();
+            }
 
             if (connection == null)
+            {
                 throw new ObjectDisposedException("Connection", "Cannot initialize as the connection has been deinitialized");
+            }
 
             //Just a wrapper function for sending null
             SetPresence(null);
@@ -869,21 +980,30 @@ namespace DiscordRPC
         /// <para>Requires the UriScheme to be registered.</para>
         /// </summary>
         /// <param name="type">The event type to subscribe to</param>
-        public void Subscribe(EventType type) { SetSubscription(Subscription | type); }
+        public void Subscribe(EventType type)
+        {
+            SetSubscription(Subscription | type);
+        }
 
         /// <summary>
         /// 
         /// </summary>
         /// <param name="type"></param>
         [System.Obsolete("Replaced with Unsubscribe", true)]
-        public void Unubscribe(EventType type) { SetSubscription(Subscription & ~type); }
+        public void Unubscribe(EventType type)
+        {
+            SetSubscription(Subscription & ~type);
+        }
 
         /// <summary>
         /// Unsubscribe from the event sent by discord. Used for Join / Spectate feature.
         /// <para>Requires the UriScheme to be registered.</para>
         /// </summary>
         /// <param name="type">The event type to unsubscribe from</param>
-        public void Unsubscribe(EventType type) { SetSubscription(Subscription & ~type); }
+        public void Unsubscribe(EventType type)
+        {
+            SetSubscription(Subscription & ~type);
+        }
 
         /// <summary>
         /// Sets the subscription to the events sent from Discord.
@@ -918,34 +1038,53 @@ namespace DiscordRPC
         {
             //Because of SetSubscription, this can actually be none as there is no differences. 
             //If that is the case, we should just stop here
-            if (type == EventType.None) return;
+            if (type == EventType.None)
+            {
+                return;
+            }
 
             //We cannot do anything if we are disposed or missing our connection.
             if (IsDisposed)
+            {
                 throw new ObjectDisposedException("Discord IPC Client");
+            }
 
             if (!IsInitialized)
+            {
                 throw new UninitializedException();
+            }
 
             if (connection == null)
+            {
                 throw new ObjectDisposedException("Connection", "Cannot initialize as the connection has been deinitialized");
+            }
 
             //We dont have the Uri Scheme registered, we should throw a exception to tell the user.
             if (!HasRegisteredUriScheme)
+            {
                 throw new InvalidConfigurationException("Cannot subscribe/unsubscribe to an event as this application has not registered a URI Scheme. Call RegisterUriScheme().");
+            }
 
             //Add the subscribe command to be sent when the connection is able too
             if ((type & EventType.Spectate) == EventType.Spectate)
+            {
                 connection.EnqueueCommand(new SubscribeCommand() { Event = RPC.Payload.ServerEvent.ActivitySpectate, IsUnsubscribe = isUnsubscribe });
+            }
 
             if ((type & EventType.Join) == EventType.Join)
+            {
                 connection.EnqueueCommand(new SubscribeCommand() { Event = RPC.Payload.ServerEvent.ActivityJoin, IsUnsubscribe = isUnsubscribe });
+            }
 
             if ((type & EventType.JoinRequest) == EventType.JoinRequest)
+            {
                 connection.EnqueueCommand(new SubscribeCommand() { Event = RPC.Payload.ServerEvent.ActivityJoinRequest, IsUnsubscribe = isUnsubscribe });
+            }
 
             if ((type & EventType.VoiceSettingsUpdate) == EventType.VoiceSettingsUpdate)
+            {
                 connection.EnqueueCommand(new SubscribeCommand() { Event = RPC.Payload.ServerEvent.VoiceSettingsUpdate, IsUnsubscribe = isUnsubscribe });
+            }
         }
 
         #endregion
@@ -957,12 +1096,16 @@ namespace DiscordRPC
         {
             //Cannot sync over uninitialized connection
             if (!IsInitialized)
+            {
                 throw new UninitializedException();
+            }
 
             //Set the presence and if we have registered the uri scheme, resubscribe.
             SetPresence(CurrentPresence);
             if (HasRegisteredUriScheme)
+            {
                 SubscribeToTypes(Subscription, false);
+            }
         }
 
         /// <summary>
@@ -972,13 +1115,19 @@ namespace DiscordRPC
         public bool Initialize()
         {
             if (IsDisposed)
+            {
                 throw new ObjectDisposedException("Discord IPC Client");
+            }
 
             if (IsInitialized)
+            {
                 throw new UninitializedException("Cannot initialize a client that is already initialized");
+            }
 
             if (connection == null)
+            {
                 throw new ObjectDisposedException("Connection", "Cannot initialize as the connection has been deinitialized");
+            }
 
             return IsInitialized = connection.AttemptConnection();
         }
@@ -989,7 +1138,9 @@ namespace DiscordRPC
         public void Deinitialize()
         {
             if (!IsInitialized)
+            {
                 throw new UninitializedException("Cannot deinitialize a client that has not been initalized.");
+            }
 
             connection.Close();
             IsInitialized = false;
@@ -1000,8 +1151,14 @@ namespace DiscordRPC
         /// </summary>
         public void Dispose()
         {
-            if (IsDisposed) return;
-            if (IsInitialized) Deinitialize();
+            if (IsDisposed)
+            {
+                return;
+            }
+            if (IsInitialized)
+            {
+                Deinitialize();
+            }
             IsDisposed = true;
         }
 
