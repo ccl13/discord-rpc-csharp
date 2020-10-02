@@ -70,7 +70,10 @@ namespace DiscordRPC
             set
             {
                 this._logger = value;
-                if (connection != null) connection.Logger = value;
+                if (connection != null)
+                {
+                    connection.Logger = value;
+                }
             }
         }
         private ILogger _logger;

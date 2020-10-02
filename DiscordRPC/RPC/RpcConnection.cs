@@ -97,6 +97,7 @@ namespace DiscordRPC.RPC
         private Configuration _configuration = null;
         private readonly object _configurationLockObject = new object();
 
+        // TODO: Wrong usage of volatile.
         private volatile bool _aborting = false;
         private volatile bool _shutdown = false;
 
@@ -408,8 +409,8 @@ namespace DiscordRPC.RPC
                         //Continously iterate, waiting for the frame
                         //We want to only stop reading if the inside tells us (mainloop), if we are aborting (abort) or the pipe disconnects
                         // We dont want to exit on a shutdown, as we still have information
-                        bool mainloop = true;
-                        while (mainloop && !_aborting && !_shutdown && _namedPipe.IsConnected)
+                        bool isCloseRequired = false;
+                        while (!isCloseRequired && !_aborting && !_shutdown && _namedPipe.IsConnected)
                         {
                             PipeFrame frame;
                             #region Read Loop
@@ -417,76 +418,8 @@ namespace DiscordRPC.RPC
                             //Iterate over every frame we have queued up, processing its contents
                             if (_namedPipe.ReadFrame(out frame))
                             {
-                                #region Read Payload
-                                Logger.Trace("Read Payload: {0}", frame.Opcode);
-
                                 //Do some basic processing on the frame
-                                switch (frame.Opcode)
-                                {
-                                    //We have been told by discord to close, so we will consider it an abort
-                                    case Opcode.Close:
-                                        ClosePayload close = frame.GetObject<ClosePayload>();
-                                        Logger.Warning("We have been told to terminate by discord: ({0}) {1}", close.Code, close.Reason);
-                                        EnqueueMessage(new CloseMessage() { Code = close.Code, Reason = close.Reason });
-                                        mainloop = false;
-                                        break;
-
-                                    //We have pinged, so we will flip it and respond back with pong
-                                    case Opcode.Ping:
-                                        Logger.Trace("PING");
-                                        frame.Opcode = Opcode.Pong;
-                                        _namedPipe.WriteFrame(frame);
-                                        break;
-
-                                    //We have ponged? I have no idea if Discord actually sends ping/pongs.
-                                    case Opcode.Pong:
-                                        Logger.Trace("PONG");
-                                        break;
-
-                                    //A frame has been sent, we should deal with that
-                                    case Opcode.Frame:
-                                        if (_shutdown)
-                                        {
-                                            //We are shutting down, so skip it
-                                            Logger.Warning("Skipping frame because we are shutting down.");
-                                            break;
-                                        }
-
-                                        if (frame.Data == null)
-                                        {
-                                            //We have invalid data, thats not good.
-                                            Logger.Error("We received no data from the frame so we cannot get the event payload!");
-                                            break;
-                                        }
-
-                                        //We have a frame, so we are going to process the payload and add it to the stack
-                                        EventPayload response = null;
-                                        try
-                                        {
-                                            response = frame.GetObject<EventPayload>();
-                                        }
-                                        catch (Exception e)
-                                        {
-                                            Logger.Error("Failed to parse event! " + e.Message);
-                                            Logger.Error("Data: " + frame.Message);
-                                        }
-
-                                        if (response != null)
-                                        {
-                                            ProcessFrame(response);
-                                        }
-                                        break;
-
-
-                                    default:
-                                    case Opcode.Handshake:
-                                        //We have a invalid opcode, better terminate to be safe
-                                        Logger.Error("Invalid opcode: {0}", frame.Opcode);
-                                        mainloop = false;
-                                        break;
-                                }
-
-                                #endregion
+                                ProcessRawFrame(frame, out isCloseRequired);
                             }
                             else if (!_aborting && _namedPipe.IsConnected)
                             {
@@ -555,7 +488,7 @@ namespace DiscordRPC.RPC
         /// <summary>
         /// Main thread loop
         /// </summary>
-        private void ProcessLoop()
+        private void ProcessCommandLoop()
         {
             //Forever trying to connect unless the abort signal is sent
             //Keep Alive Loop
@@ -591,6 +524,76 @@ namespace DiscordRPC.RPC
         }
 
         #region Reading
+
+        private void ProcessRawFrame(PipeFrame frame, out bool isCloseRequired)
+        {
+            Logger.Trace("Read Payload: {0}", frame.Opcode);
+            isCloseRequired = false;
+            switch (frame.Opcode)
+            {
+                //We have been told by discord to close, so we will consider it an abort
+                case Opcode.Close:
+                    ClosePayload close = frame.GetObject<ClosePayload>();
+                    Logger.Warning("We have been told to terminate by discord: ({0}) {1}", close.Code, close.Reason);
+                    EnqueueMessage(new CloseMessage() { Code = close.Code, Reason = close.Reason });
+                    isCloseRequired = true;
+                    break;
+
+                //We have pinged, so we will flip it and respond back with pong
+                case Opcode.Ping:
+                    Logger.Trace("PING");
+                    frame.Opcode = Opcode.Pong;
+                    _namedPipe.WriteFrame(frame);
+                    break;
+
+                //We have ponged? I have no idea if Discord actually sends ping/pongs.
+                case Opcode.Pong:
+                    Logger.Trace("PONG");
+                    break;
+
+                //A frame has been sent, we should deal with that
+                case Opcode.Frame:
+                    if (_shutdown)
+                    {
+                        //We are shutting down, so skip it
+                        Logger.Warning("Skipping frame because we are shutting down.");
+                        break;
+                    }
+
+                    if (frame.Data == null)
+                    {
+                        //We have invalid data, thats not good.
+                        Logger.Error("We received no data from the frame so we cannot get the event payload!");
+                        break;
+                    }
+
+                    //We have a frame, so we are going to process the payload and add it to the stack
+                    EventPayload response = null;
+                    try
+                    {
+                        response = frame.GetObject<EventPayload>();
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.Error("Failed to parse event! " + e.Message);
+                        Logger.Error("Data: " + frame.Message);
+                    }
+
+                    if (response != null)
+                    {
+                        ProcessFrame(response);
+                    }
+                    break;
+
+
+                default:
+                case Opcode.Handshake:
+                    //We have a invalid opcode, better terminate to be safe
+                    Logger.Error("Invalid opcode: {0}", frame.Opcode);
+                    isCloseRequired = true;
+                    break;
+            }
+        }
 
         /// <summary>Handles the response from the pipe and calls appropriate events and changes states.</summary>
         /// <param name="response">The response received by the server.</param>
@@ -974,7 +977,7 @@ namespace DiscordRPC.RPC
             _processMessageThread.IsBackground = true;
             _processMessageThread.Start();
 
-            _processCommandThread = new Thread(ProcessLoop);
+            _processCommandThread = new Thread(ProcessCommandLoop);
             _processCommandThread.Name = "Process Thread";
             _processCommandThread.IsBackground = true;
             _processCommandThread.Start();
@@ -1016,6 +1019,7 @@ namespace DiscordRPC.RPC
                 _rtQueue.Enqueue(new CloseCommand());
                 //Trigger the event
                 _receivedMessageSignal.Set();
+                _receivedCommandSignal.Set();
             }
         }
 
