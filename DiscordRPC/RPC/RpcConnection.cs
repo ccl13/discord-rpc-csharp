@@ -46,8 +46,10 @@ namespace DiscordRPC.RPC
             set
             {
                 _logger = value;
-                if (namedPipe != null)
-                    namedPipe.Logger = value;
+                if (_namedPipe != null)
+                {
+                    _namedPipe.Logger = value;
+                }
             }
         }
         private ILogger _logger;
@@ -62,24 +64,46 @@ namespace DiscordRPC.RPC
         /// <summary>
         /// The current state of the RPC connection
         /// </summary>
-        public RpcState State { get { var tmp = RpcState.Disconnected; lock (l_states) tmp = _state; return tmp; } }
+        public RpcState State
+        {
+            get
+            {
+                var tmp = RpcState.Disconnected;
+                lock (_stateLockObject)
+                {
+                    tmp = _state;
+                }
+                return tmp;
+            }
+        }
         private RpcState _state;
-        private readonly object l_states = new object();
+        private readonly object _stateLockObject = new object();
 
         /// <summary>
         /// The configuration received by the Ready
         /// </summary>
-        public Configuration Configuration { get { Configuration tmp = null; lock (l_config) tmp = _configuration; return tmp; } }
+        public Configuration Configuration
+        {
+            get
+            {
+                Configuration tmp = null;
+                lock (_configurationLockObject)
+                {
+                    tmp = _configuration;
+                }
+                return tmp;
+            }
+        }
         private Configuration _configuration = null;
-        private readonly object l_config = new object();
+        private readonly object _configurationLockObject = new object();
 
-        private volatile bool aborting = false;
-        private volatile bool shutdown = false;
+        private volatile bool _aborting = false;
+        private volatile bool _shutdown = false;
 
         /// <summary>
         /// Indicates if the RPC connection is still running in the background
         /// </summary>
-        public bool IsRunning { get { return thread != null; } }
+        public bool IsRunning { get { return _processMessageThread != null; } }
 
         /// <summary>
         /// Forces the <see cref="Close"/> to call <see cref="Shutdown"/> instead, safely saying goodbye to Discord. 
@@ -91,26 +115,80 @@ namespace DiscordRPC.RPC
 
         #region Privates
 
-        private string applicationID;                   //ID of the Discord APP
-        private int processID;                          //ID of the process to track
+        /// <summary>
+        /// ID of the Discord APP
+        /// </summary>
+        private string _discordApplicationId;
+        /// <summary>
+        /// ID of the process to track
+        /// </summary>
+        private int _discordApplicationProcessId;
 
-        private long nonce;                             //Current command index
+        /// <summary>
+        /// Current command index (Nonce)
+        /// </summary>
+        private long _currentNonce;
 
-        private Thread thread;                          //The current thread
-        private INamedPipeClient namedPipe;
+        /// <summary>
+        /// Read Loop
+        /// </summary>
+        private Thread _processMessageThread;
 
-        private int targetPipe;                             //The pipe to taget. Leave as -1 for any available pipe.
+        /// <summary>
+        /// Process loop
+        /// </summary>
+        private Thread _processCommandThread;
 
-        private readonly object _rtQueueLock = new object();	//Lock for the send queue
+        /// <summary>
+        /// Named Pipe client
+        /// </summary>
+        private INamedPipeClient _namedPipe;
+
+        /// <summary>
+        /// The pipe number to target. Leave as -1 for any available pipe.
+        /// </summary>
+        private int _currentTargetPipeNumber;
+
+        /// <summary>
+        /// Lock for the send queue
+        /// </summary>
+        private readonly object _rtQueueLock = new object();
+        /// <summary>
+        /// Max send queue size
+        /// </summary>
         private readonly uint _maxRtQueueSize;
-        private Queue<ICommand> _rtQueue;                   //The send queue
+        /// <summary>
+        /// The send queue
+        /// </summary>
+        private Queue<ICommand> _rtQueue;
 
-        private readonly object _rxQueueLock = new object();	//Lock for the receive queue
-        private readonly uint _maxRxQueueSize;              //The max size of the RX queue
-        private Queue<IMessage> _rxQueue;                   //The receive queue
+        /// <summary>
+        /// Lock for the receive queue
+        /// </summary>
+        private readonly object _rxQueueLock = new object();
+        /// <summary>
+        /// Max receive queue size
+        /// </summary>
+        private readonly uint _maxRxQueueSize;
+        /// <summary>
+        /// The receive queue
+        /// </summary>
+        private Queue<IMessage> _rxQueue;
 
-        private AutoResetEvent _queueUpdatedEvent = new AutoResetEvent(false);
-        private BackoffDelay _delay;                     //The backoff delay before reconnecting.
+        /// <summary>
+        /// The send queue has update signal
+        /// </summary>
+        private AutoResetEvent _receivedMessageSignal = new AutoResetEvent(false);
+        /// <summary>
+        /// The process queue has update signal
+        /// </summary>
+        private AutoResetEvent _receivedCommandSignal = new AutoResetEvent(false);
+
+        /// <summary>
+        /// The backoff delay before reconnecting
+        /// </summary>
+        private BackoffDelay _delay;
+
         #endregion
 
         /// <summary>
@@ -122,12 +200,18 @@ namespace DiscordRPC.RPC
         /// <param name="client">The pipe client we shall use.</param>
         /// <param name="maxRxQueueSize">The maximum size of the out queue</param>
         /// <param name="maxRtQueueSize">The maximum size of the in queue</param>
-        public RpcConnection(string applicationID, int processID, int targetPipe, INamedPipeClient client, uint maxRxQueueSize = 128, uint maxRtQueueSize = 512)
+        public RpcConnection(
+            string applicationID,
+            int processID,
+            int targetPipe,
+            INamedPipeClient client,
+            uint maxRxQueueSize = 128,
+            uint maxRtQueueSize = 512)
         {
-            this.applicationID = applicationID;
-            this.processID = processID;
-            this.targetPipe = targetPipe;
-            this.namedPipe = client;
+            this._discordApplicationId = applicationID;
+            this._discordApplicationProcessId = processID;
+            this._currentTargetPipeNumber = targetPipe;
+            this._namedPipe = client;
             this.ShutdownOnly = true;
 
             //Assign a default logger
@@ -140,14 +224,14 @@ namespace DiscordRPC.RPC
             _maxRxQueueSize = maxRxQueueSize;
             _rxQueue = new Queue<IMessage>((int)_maxRxQueueSize + 1);
 
-            nonce = 0;
+            _currentNonce = 0;
         }
 
 
         private long GetNextNonce()
         {
-            nonce += 1;
-            return nonce;
+            _currentNonce += 1;
+            return _currentNonce;
         }
 
         #region Queues
@@ -157,10 +241,19 @@ namespace DiscordRPC.RPC
         /// <param name="command">The command to enqueue</param>
         internal void EnqueueCommand(ICommand command)
         {
-            Logger.Trace("Enqueue Command: " + command.GetType().FullName);
+            if (command == null)
+            {
+                Logger.Warning("Enqueue null command?");
+                return;
+            }
+
+            Logger.Trace($"Enqueue Command: {command.GetType().FullName}");
 
             //We cannot add anything else if we are aborting or shutting down.
-            if (aborting || shutdown) return;
+            if (_aborting || _shutdown)
+            {
+                return;
+            }
 
             //Enqueue the set presence argument
             lock (_rtQueueLock)
@@ -174,6 +267,7 @@ namespace DiscordRPC.RPC
 
                 //Enqueue the message
                 _rtQueue.Enqueue(command);
+                _receivedCommandSignal.Set();
             }
         }
 
@@ -206,7 +300,7 @@ namespace DiscordRPC.RPC
             }
 
             //Large queue sizes should keep the queue in check
-            Logger.Trace("Enqueue Message: " + message.Type);
+            Logger.Trace($"Enqueue Message: {message.Type}");
             lock (_rxQueueLock)
             {
                 //If we are too big drop the last element
@@ -231,7 +325,10 @@ namespace DiscordRPC.RPC
             lock (_rxQueueLock)
             {
                 //We have nothing, so just return null.
-                if (_rxQueue.Count == 0) return null;
+                if (_rxQueue.Count == 0)
+                {
+                    return null;
+                }
 
                 //Get the value and remove it from the list at the same time
                 return _rxQueue.Dequeue();
@@ -242,7 +339,7 @@ namespace DiscordRPC.RPC
         /// Dequeues all messages from the event stack. 
         /// </summary>
         /// <returns></returns>
-        internal IMessage[] DequeueMessages()
+        internal IMessage[] DequeueAllMessages()
         {
             //Logger.Trace("Deque Multiple Messages");
             lock (_rxQueueLock)
@@ -270,10 +367,10 @@ namespace DiscordRPC.RPC
             {
                 Logger.Trace("============================");
                 Logger.Trace("Assembly:             " + System.Reflection.Assembly.GetAssembly(typeof(RichPresence)).FullName);
-                Logger.Trace("Pipe:                 " + namedPipe.GetType().FullName);
+                Logger.Trace("Pipe:                 " + _namedPipe.GetType().FullName);
                 Logger.Trace("Platform:             " + Environment.OSVersion.ToString());
-                Logger.Trace("applicationID:        " + applicationID);
-                Logger.Trace("targetPipe:           " + targetPipe);
+                Logger.Trace("applicationID:        " + _discordApplicationId);
+                Logger.Trace("targetPipe:           " + _currentTargetPipeNumber);
                 Logger.Trace("POLL_RATE:            " + POLL_RATE);
                 Logger.Trace("_maxRtQueueSize:      " + _maxRtQueueSize);
                 Logger.Trace("_maxRxQueueSize:      " + _maxRxQueueSize);
@@ -282,27 +379,27 @@ namespace DiscordRPC.RPC
 
             //Forever trying to connect unless the abort signal is sent
             //Keep Alive Loop
-            while (!aborting && !shutdown)
+            while (!_aborting && !_shutdown)
             {
                 try
                 {
                     //Wrap everything up in a try get
                     //Dispose of the pipe if we have any (could be broken)
-                    if (namedPipe == null)
+                    if (_namedPipe == null)
                     {
                         Logger.Error("Something bad has happened with our pipe client!");
-                        aborting = true;
+                        _aborting = true;
                         return;
                     }
 
                     //Connect to a new pipe
-                    Logger.Trace("Connecting to the pipe through the {0}", namedPipe.GetType().FullName);
-                    if (namedPipe.Connect(targetPipe))
+                    Logger.Trace("Connecting to the pipe through the {0}", _namedPipe.GetType().FullName);
+                    if (_namedPipe.Connect(_currentTargetPipeNumber))
                     {
                         #region Connected
                         //We connected to a pipe! Reset the delay
                         Logger.Trace("Connected to the pipe. Attempting to establish handshake...");
-                        EnqueueMessage(new ConnectionEstablishedMessage() { ConnectedPipe = namedPipe.ConnectedPipe });
+                        EnqueueMessage(new ConnectionEstablishedMessage() { ConnectedPipe = _namedPipe.ConnectedPipe });
 
                         //Attempt to establish a handshake
                         EstablishHandshake();
@@ -311,14 +408,14 @@ namespace DiscordRPC.RPC
                         //Continously iterate, waiting for the frame
                         //We want to only stop reading if the inside tells us (mainloop), if we are aborting (abort) or the pipe disconnects
                         // We dont want to exit on a shutdown, as we still have information
-                        PipeFrame frame;
                         bool mainloop = true;
-                        while (mainloop && !aborting && !shutdown && namedPipe.IsConnected)
+                        while (mainloop && !_aborting && !_shutdown && _namedPipe.IsConnected)
                         {
+                            PipeFrame frame;
                             #region Read Loop
 
                             //Iterate over every frame we have queued up, processing its contents
-                            if (namedPipe.ReadFrame(out frame))
+                            if (_namedPipe.ReadFrame(out frame))
                             {
                                 #region Read Payload
                                 Logger.Trace("Read Payload: {0}", frame.Opcode);
@@ -338,7 +435,7 @@ namespace DiscordRPC.RPC
                                     case Opcode.Ping:
                                         Logger.Trace("PING");
                                         frame.Opcode = Opcode.Pong;
-                                        namedPipe.WriteFrame(frame);
+                                        _namedPipe.WriteFrame(frame);
                                         break;
 
                                     //We have ponged? I have no idea if Discord actually sends ping/pongs.
@@ -348,7 +445,7 @@ namespace DiscordRPC.RPC
 
                                     //A frame has been sent, we should deal with that
                                     case Opcode.Frame:
-                                        if (shutdown)
+                                        if (_shutdown)
                                         {
                                             //We are shutting down, so skip it
                                             Logger.Warning("Skipping frame because we are shutting down.");
@@ -364,7 +461,10 @@ namespace DiscordRPC.RPC
 
                                         //We have a frame, so we are going to process the payload and add it to the stack
                                         EventPayload response = null;
-                                        try { response = frame.GetObject<EventPayload>(); }
+                                        try
+                                        {
+                                            response = frame.GetObject<EventPayload>();
+                                        }
                                         catch (Exception e)
                                         {
                                             Logger.Error("Failed to parse event! " + e.Message);
@@ -388,30 +488,26 @@ namespace DiscordRPC.RPC
 
                                 #endregion
                             }
-
-                            if (!aborting && namedPipe.IsConnected)
+                            else if (!_aborting && _namedPipe.IsConnected)
                             {
-                                //Process the entire command queue we have left
-                                ProcessCommandQueue();
-
                                 //Wait for some time, or until a command has been queued up
-                                _queueUpdatedEvent.WaitOne(POLL_RATE);
+                                _receivedMessageSignal.WaitOne(POLL_RATE);
                             }
 
                             #endregion
                         }
                         #endregion
 
-                        Logger.Trace("Left main read loop for some reason. Aborting: {0}, Shutting Down: {1}", aborting, shutdown);
+                        Logger.Trace("Left main read loop for some reason. Aborting: {0}, Shutting Down: {1}", _aborting, _shutdown);
                     }
                     else
                     {
                         Logger.Error("Failed to connect for some reason.");
-                        EnqueueMessage(new ConnectionFailedMessage() { FailedPipe = targetPipe });
+                        EnqueueMessage(new ConnectionFailedMessage() { FailedPipe = _currentTargetPipeNumber });
                     }
 
                     //If we are not aborting, we have to wait a bit before trying to connect again
-                    if (!aborting && !shutdown)
+                    if (!_aborting && !_shutdown)
                     {
                         //We have disconnected for some reason, either a failed pipe or a bad reading,
                         // so we are going to wait a bit before doing it again
@@ -434,11 +530,11 @@ namespace DiscordRPC.RPC
                 finally
                 {
                     //Disconnect from the pipe because something bad has happened. An exception has been thrown or the main read loop has terminated.
-                    if (namedPipe.IsConnected)
+                    if (_namedPipe.IsConnected)
                     {
                         //Terminate the pipe
                         Logger.Trace("Closing the named pipe.");
-                        namedPipe.Close();
+                        _namedPipe.Close();
                     }
 
                     //Update our state
@@ -448,8 +544,48 @@ namespace DiscordRPC.RPC
 
             //We have disconnected, so dispose of the thread and the pipe.
             Logger.Trace("Left Main Loop");
-            if (namedPipe != null)
-                namedPipe.Dispose();
+            if (_namedPipe != null)
+            {
+                _namedPipe.Dispose();
+            }
+
+            Logger.Info("Thread Terminated, no longer performing RPC connection.");
+        }
+
+        /// <summary>
+        /// Main thread loop
+        /// </summary>
+        private void ProcessLoop()
+        {
+            //Forever trying to connect unless the abort signal is sent
+            //Keep Alive Loop
+            while (!_aborting && !_shutdown)
+            {
+                try
+                {
+                    if (!_aborting && _namedPipe.IsConnected)
+                    {
+                        //Process the entire command queue we have left
+                        ProcessCommandQueue();
+
+                        //Wait for some time, or until a command has been queued up
+                        _receivedCommandSignal.WaitOne(POLL_RATE);
+                    }
+                }
+                catch (Exception e)
+                {
+                    Logger.Error("Unhandled Exception: {0}", e.GetType().FullName);
+                    Logger.Error(e.Message);
+                    Logger.Error(e.StackTrace);
+                }
+            }
+
+            //We have disconnected, so dispose of the thread and the pipe.
+            Logger.Trace("Left Main Loop");
+            if (_namedPipe != null)
+            {
+                _namedPipe.Dispose();
+            }
 
             Logger.Info("Thread Terminated, no longer performing RPC connection.");
         }
@@ -488,7 +624,7 @@ namespace DiscordRPC.RPC
 
                     //Prepare the object
                     ReadyMessage ready = response.GetObject<ReadyMessage>();
-                    lock (l_config)
+                    lock (_configurationLockObject)
                     {
                         _configuration = ready.Configuration;
                         ready.User.SetConfiguration(_configuration);
@@ -631,47 +767,78 @@ namespace DiscordRPC.RPC
 
         #region Writting
 
+        internal ICommand PeekCommand()
+        {
+            lock (_rtQueueLock)
+            {
+                //We have nothing, so just return null.
+                if (_rtQueue.Count == 0)
+                {
+                    return null;
+                }
+
+                //Get the value and remove it from the list at the same time
+                return _rtQueue.Peek();
+            }
+        }
+
+        internal bool DropCommand()
+        {
+            lock (_rtQueueLock)
+            {
+                if (_rtQueue.Count == 0)
+                {
+                    return false;
+                }
+
+                _rtQueue.Dequeue();
+                return true;
+            }
+        }
+
+
         private void ProcessCommandQueue()
         {
             //Logger.Info("Checking command queue");
 
             //We are not ready yet, dont even try
             if (State != RpcState.Connected)
+            {
                 return;
+            }
 
             //We are aborting, so we will just log a warning so we know this is probably only going to send the CLOSE
-            if (aborting)
+            if (_aborting)
+            {
                 Logger.Warning("We have been told to write a queue but we have also been aborted.");
+            }
 
             //Prepare some variabels we will clone into with locks
             bool needsWriting = true;
-            ICommand item = null;
 
             //Continue looping until we dont need anymore messages
-            while (needsWriting && namedPipe.IsConnected)
+            while (needsWriting && _namedPipe.IsConnected)
             {
-                lock (_rtQueueLock)
+                var currentCommand = PeekCommand();
+                needsWriting = currentCommand != null;
+                if (!needsWriting)
                 {
-                    //Pull the value and update our writing needs
-                    // If we have nothing to write, exit the loop
-                    needsWriting = _rtQueue.Count > 0;
-                    if (!needsWriting) break;
-
-                    //Peek at the item
-                    item = _rtQueue.Peek();
+                    break;
                 }
 
-                //BReak out of the loop as soon as we send this item
-                if (shutdown || (!aborting && LOCK_STEP))
+                //Break out of the loop as soon as we send this item
+                if (_shutdown || (!_aborting && LOCK_STEP))
+                {
                     needsWriting = false;
+                }
 
                 //Prepare the payload
-                IPayload payload = item.PreparePayload(GetNextNonce());
-                Logger.Trace("Attempting to send payload: " + payload.Command);
+                IPayload payload = currentCommand.PreparePayload(GetNextNonce());
+                Logger.Trace($"Attempting to send payload: {payload.Command}");
 
                 //Prepare the frame
                 PipeFrame frame = new PipeFrame();
-                if (item is CloseCommand)
+                if (currentCommand is CloseCommand)
                 {
                     //We have been sent a close frame. We better just send a handwave
                     //Send it off to the server
@@ -679,18 +846,18 @@ namespace DiscordRPC.RPC
 
                     //Queue the item
                     Logger.Trace("Handwave sent, ending queue processing.");
-                    lock (_rtQueueLock) _rtQueue.Dequeue();
+                    DropCommand();
 
                     //Stop sending any more messages
                     return;
                 }
                 else
                 {
-                    if (aborting)
+                    if (_aborting)
                     {
                         //We are aborting, so just dequeue the message and dont bother sending it
                         Logger.Warning("- skipping frame because of abort.");
-                        lock (_rtQueueLock) _rtQueue.Dequeue();
+                        DropCommand();
                     }
                     else
                     {
@@ -699,11 +866,11 @@ namespace DiscordRPC.RPC
 
                         //Write it and if it wrote perfectly fine, we will dequeue it
                         Logger.Trace("Sending payload: " + payload.Command);
-                        if (namedPipe.WriteFrame(frame))
+                        if (_namedPipe.WriteFrame(frame))
                         {
                             //We sent it, so now dequeue it
                             Logger.Trace("Sent Successfully.");
-                            lock (_rtQueueLock) _rtQueue.Dequeue();
+                            DropCommand();
                         }
                         else
                         {
@@ -740,7 +907,7 @@ namespace DiscordRPC.RPC
 
             //Send it off to the server
             Logger.Trace("Sending Handshake...");
-            if (!namedPipe.WriteFrame(new PipeFrame(Opcode.Handshake, new Handshake() { Version = VERSION, ClientID = applicationID })))
+            if (!_namedPipe.WriteFrame(new PipeFrame(Opcode.Handshake, new Handshake() { Version = VERSION, ClientID = _discordApplicationId })))
             {
                 Logger.Error("Failed to write a handshake.");
                 return;
@@ -765,7 +932,7 @@ namespace DiscordRPC.RPC
             }
 
             //Send the handwave
-            if (!namedPipe.WriteFrame(new PipeFrame(Opcode.Close, new Handshake() { Version = VERSION, ClientID = applicationID })))
+            if (!_namedPipe.WriteFrame(new PipeFrame(Opcode.Close, new Handshake() { Version = VERSION, ClientID = _discordApplicationId })))
             {
                 Logger.Error("failed to write a handwave.");
                 return;
@@ -782,7 +949,7 @@ namespace DiscordRPC.RPC
             Logger.Info("Attempting a new connection");
 
             //The thread mustn't exist already
-            if (thread != null)
+            if (_processMessageThread != null)
             {
                 Logger.Error("Cannot attempt a new connection as the previous connection thread is not null!");
                 return false;
@@ -795,17 +962,22 @@ namespace DiscordRPC.RPC
                 return false;
             }
 
-            if (aborting)
+            if (_aborting)
             {
                 Logger.Error("Cannot attempt a new connection while aborting!");
                 return false;
             }
 
             //Start the thread up
-            thread = new Thread(MainLoop);
-            thread.Name = "Discord IPC Thread";
-            thread.IsBackground = true;
-            thread.Start();
+            _processMessageThread = new Thread(MainLoop);
+            _processMessageThread.Name = "Discord IPC Thread";
+            _processMessageThread.IsBackground = true;
+            _processMessageThread.Start();
+
+            _processCommandThread = new Thread(ProcessLoop);
+            _processCommandThread.Name = "Process Thread";
+            _processCommandThread.IsBackground = true;
+            _processCommandThread.Start();
 
             return true;
         }
@@ -817,7 +989,7 @@ namespace DiscordRPC.RPC
         private void SetConnectionState(RpcState state)
         {
             Logger.Trace("Setting the connection state to {0}", state.ToString().ToSnakeCase().ToUpperInvariant());
-            lock (l_states)
+            lock (_stateLockObject)
             {
                 _state = state;
             }
@@ -831,18 +1003,20 @@ namespace DiscordRPC.RPC
         {
             //Enable the flag
             Logger.Trace("Initiated shutdown procedure");
-            shutdown = true;
+            _shutdown = true;
 
             //Clear the commands and enqueue the close
             lock (_rtQueueLock)
             {
                 _rtQueue.Clear();
-                if (CLEAR_ON_SHUTDOWN) _rtQueue.Enqueue(new PresenceCommand() { PID = processID, Presence = null });
+                if (CLEAR_ON_SHUTDOWN)
+                {
+                    _rtQueue.Enqueue(new PresenceCommand() { PID = _discordApplicationProcessId, Presence = null });
+                }
                 _rtQueue.Enqueue(new CloseCommand());
+                //Trigger the event
+                _receivedMessageSignal.Set();
             }
-
-            //Trigger the event
-            _queueUpdatedEvent.Set();
         }
 
         /// <summary>
@@ -850,13 +1024,19 @@ namespace DiscordRPC.RPC
         /// </summary>
         public void Close()
         {
-            if (thread == null)
+            if (_processMessageThread == null)
             {
                 Logger.Error("Cannot close as it is not available!");
                 return;
             }
 
-            if (aborting)
+            if (_processCommandThread == null)
+            {
+                Logger.Error("Cannot close as it is not available!");
+                return;
+            }
+
+            if (_aborting)
             {
                 Logger.Error("Cannot abort as it has already been aborted");
                 return;
@@ -871,8 +1051,9 @@ namespace DiscordRPC.RPC
 
             //Terminate
             Logger.Trace("Updating Abort State...");
-            aborting = true;
-            _queueUpdatedEvent.Set();
+            _aborting = true;
+            _receivedMessageSignal.Set();
+            _receivedCommandSignal.Set();
         }
 
 

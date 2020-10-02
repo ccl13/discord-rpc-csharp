@@ -84,8 +84,11 @@ namespace DiscordRPC.Events
     /// <param name="args">The arguments supplied with the event</param>
     public delegate void OnConnectionFailedEvent(object sender, ConnectionFailedMessage args);
 
-
-
+    /// <summary>
+    /// Discord client voice setting is updated
+    /// </summary>
+    /// <param name="sender">The Discord client handler that sent this event</param>
+    /// <param name="args">The arguments supplied with the event</param>
     public delegate void OnVoiceSettingsUpdateEvent(object sender, VoiceSettingsMessage args);
 
 

@@ -298,7 +298,7 @@ namespace DiscordRPC
             }
 
             //Dequeue all the messages and process them
-            IMessage[] messages = connection.DequeueMessages();
+            IMessage[] messages = connection.DequeueAllMessages();
             for (int i = 0; i < messages.Length; i++)
             {
                 //Do a bit of pre-processing
@@ -316,7 +316,10 @@ namespace DiscordRPC
         /// <param name="message"></param>
 		private void ProcessMessage(IMessage message)
         {
-            if (message == null) return;
+            if (message == null)
+            {
+                return;
+            }
             switch (message.Type)
             {
                 //We got a update, so we will update our current presence
